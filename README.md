@@ -108,6 +108,7 @@ pm2 delete beest
   - [x] run an bee light node
   - [x] run an bee full node
 - [x] show status of all bee nodes
+  - [ ] funding wallet status 
 - [x] delete all bees
 - [x] funding wallet to fund xdai for bee nodes
 - [x] pm2 integration
