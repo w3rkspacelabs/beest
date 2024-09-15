@@ -18,7 +18,7 @@
 - any Linux distribution (tested on Ubuntu) 
 
 > [!WARNING] 
-> - Always install node using [nvm](https://github.com/nvm-sh/nvm).
+> - Install and manage node versions using [nvm](https://github.com/nvm-sh/nvm).
 > - Do not install the nodejs apt package! It may require root privileges to install npm modules and lead to security issues!
 
 ## 1. Uninstall any existing `nodejs` apt packages

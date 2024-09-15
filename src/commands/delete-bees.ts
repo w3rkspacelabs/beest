@@ -33,7 +33,6 @@ export class DeleteBees implements Command {
       s.start(`Deleting all bee node data`)
       const bees = getConfig(KEY.BEES, [])
       const beedirs = listFolders(BEES_DIR)
-      return;
       if (beedirs.length > 0) {
         rmDir(BEES_DIR)
         putConfig(KEY.BEES, [])
