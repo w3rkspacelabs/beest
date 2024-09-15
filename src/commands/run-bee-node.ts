@@ -1,6 +1,6 @@
 import { Command } from '../command'
 import { select, text, confirm, isCancel, cancel } from '@clack/prompts'
-import { ask, console_log, delay, getGnosisRPC, mkdirp, printBeeProcesses, printStartupSetup } from '../utils'
+import { ask, console_log, delay, getRPC, mkdirp, printBeeProcesses, printStartupSetup } from '../utils'
 import {
   freeBeePorts,
   newBeeId,
@@ -9,8 +9,8 @@ import {
   getConfig,
   putConfig,
   KEY,
-  ETHERPROXY_PORT,
-  ETHERPROXY_URL,
+  ETHERPROXY_PORTS,
+  ETHERPROXY_URLS,
   GOODBYE,
   BEE_MODE,
   pushConfig,
@@ -18,6 +18,11 @@ import {
   BEE,
   BIN_DIR,
   BEES_DIR,
+  BEE_NET,
+  CURRENCY,
+  CHAINS,
+  beestDb,
+  RPCS,
 } from '../config'
 import { $, fs } from 'zx'
 import { green, red } from 'picocolors'
@@ -34,6 +39,7 @@ import {
   startEtherproxy,
   isEtherproxyRunning,
   isValidRPC,
+  chainName,
 } from '../web3'
 
 export class RunBeeNode implements Command {
@@ -41,6 +47,16 @@ export class RunBeeNode implements Command {
   describe = 'Run a bee node'
   interactiveMode = true
   async handler(args: any) {
+    const chainNetwork = await select({
+      message: ask('Select network', '--network', '-n'),
+      options:[
+        {value:'mainnet', label:'Mainnet', hint: 'Gnosis'},
+        {value:'testnet', label:'Testnet', hint: 'Sepolia'},
+      ]
+    })
+    // console.log({chainNetwork})
+    // process.exit(0);
+
     const beeMode = await select({
       message: ask('Select bee mode', '--mode', '-m'),
       options: [
@@ -53,17 +69,17 @@ export class RunBeeNode implements Command {
     const passFile = BEEST_PASSWORD_FILE
     const beeId = newBeeId()
     const datadir = beeDataDir(beeId)
-    const verbosity = 'debug'
+    const verbosity = 'info'
     const ports = await freeBeePorts()
 
     const prevBees = getConfig(KEY.BEES, [])
 
     if (beeMode == 'ultralight') {
-      await startUltraLightNode({ beeId, datadir, passFile, verbosity, ports })
+      await startUltraLightNode({ chainNetwork, beeId, datadir, passFile, verbosity, ports })
     } else if (beeMode == 'light') {
-      await startNode({ beeId, datadir, passFile, verbosity, ports }, BEE_MODE.LIGHTNODE)
+      await startNode({chainNetwork, beeId, datadir, passFile, verbosity, ports }, BEE_MODE.LIGHTNODE)
     } else if (beeMode == 'full') {
-      await startNode({ beeId, datadir, passFile, verbosity, ports }, BEE_MODE.FULLNODE)
+      await startNode({chainNetwork, beeId, datadir, passFile, verbosity, ports }, BEE_MODE.FULLNODE)
     }
     const currBees = getConfig(KEY.BEES, [])
     if (currBees.length == prevBees.length + 1) {
@@ -72,17 +88,35 @@ export class RunBeeNode implements Command {
       s.stop('Beest Process List:')
       await printBeeProcesses()
       s.start('Printing Beest processes')
-      s.stop('Beest Service Setup:')
+      s.stop('Beest Service Setup: ')
       await printStartupSetup()
     }
   }
 }
 
-async function startUltraLightNode({ beeId, datadir, passFile, verbosity, ports }) {
+function makeBeeCommandFragment(chainNetwork, ports,passFile,datadir,verbosity){
+  let network = '';
+  if(chainNetwork == 'mainnet'){
+    network = `--mainnet=true`
+  }else{
+    network = `--mainnet=false --network-id=10`
+  }
+  return [
+    network,
+    `--api-addr 127.0.0.1:${ports[0]}`,
+    `--p2p-addr 127.0.0.1:${ports[1]}`,
+    `--password-file ${passFile}`,
+    `--data-dir ${datadir}`,
+    `--verbosity ${verbosity}`
+  ].join(' ')
+}
+
+async function startUltraLightNode({ chainNetwork, beeId, datadir, passFile, verbosity, ports }) {
   const s = spinner()
   mkdirp(datadir)
   const configFile = `${datadir}/pm2.config.js`
-  let beeCmd = `--api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir} --verbosity ${verbosity}`
+  let beeCmd = makeBeeCommandFragment(chainNetwork, ports,passFile,datadir,verbosity)
+  // `--api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir} --verbosity ${verbosity}`
   beeCmd += ` --swap-enable=false --full-node=false`
   let processName = `bee-${padBeeId(beeId)}-${ports[0]}`
   fs.writeFileSync(
@@ -104,7 +138,6 @@ async function startUltraLightNode({ beeId, datadir, passFile, verbosity, ports 
   s.start(`Starting Bee ultra-light node`)
   let command = `pm2 start --time --name ${beeId}-${ports[0]} -s ${configFile}`
   await $`pm2 start --time --name ${beeId}-${ports[0]} -s ${configFile}`
-  // await $`pm2 save`
   s.stop(`Started Bee ultralight node at ${green(`http://localhost:${ports[0]}`)}`)
   let bee: BEE = {
     beeId,
@@ -113,86 +146,96 @@ async function startUltraLightNode({ beeId, datadir, passFile, verbosity, ports 
     configFile: configFile,
     command,
     mode: BEE_MODE.ULTRALIGHT,
+    network: chainNetwork
   }
   pushConfig(KEY.BEES, bee)
 }
 
-async function validateRpcURLs(urls: string) {
+async function validateRpcURLs(urls: string, chainNetwork: BEE_NET) {
   let vals = urls.split(',')
   for (let i in vals) {
     let value = vals[i]
-    let valid = await isValidRPC(value, 100)
+    const chainId = CHAINS[chainNetwork].chainId
+    let valid = await isValidRPC(value, chainId);
+    const ETHERPROXY_URL = ETHERPROXY_URLS[chainNetwork];
     if (valid && value != ETHERPROXY_URL) {
       // do nothing
     } else {
       return red(
-        `Invalid value: "${value}". Please provide a valid Gnosis endpoint (from getblock.io, alchemy.com, other providers or your own)`,
+        `Invalid value: "${value}". Please provide a valid ${chainName(chainNetwork)} endpoint (from getblock.io, alchemy.com, other providers or your own)`,
       )
     }
   }
 }
 
-async function promptGnosisRPC() {
-  const oldRPC = getGnosisRPC()
-  const gnosisRpc = await text({
-    message: ask('Gnosis RPC Endpoints (one or more comma separated URLs)', '--gnosis-rpc', '-gr'),
+async function promptRPC(chainNetwork:BEE_NET) {
+  const oldRPC = getRPC(chainNetwork)
+  // console.log({oldRPC})
+  const chainRpc = await text({
+    message: ask(`${chainName(chainNetwork)} RPC Endpoints (one or more comma separated URLs)`, '--rpc', '-r'),
     placeholder: oldRPC,
     initialValue: oldRPC,
     validate(values) {
       if (values.trim() == '') {
         return red(
-          `Please provide a valid Gnosis endpoint (from getblock.io, alchemy.com, other providers or your own)`,
+          `Please provide a valid ${chainName(chainNetwork)} endpoint (from getblock.io, alchemy.com, other providers or your own)`,
         )
       }
       let vals = values.split(',')
       for (let i in vals) {
         let value = vals[i]
+        const ETHERPROXY_URL = ETHERPROXY_URLS[chainNetwork]
         if (value == ETHERPROXY_URL) {
           return red(
-            `Invalid target: "${value}". Please provide a valid Gnosis endpoint (from getblock.io, alchemy.com, other providers or your own)`,
+            `Invalid target: "${value}". Please provide a valid ${chainName(chainNetwork)} endpoint (from getblock.io, alchemy.com, other providers or your own)`,
           )
         }
       }
     },
   })
 
-  if (isCancel(gnosisRpc)) {
+  if (isCancel(chainRpc)) {
     cancel('Operation cancelled.')
     process.exit(0)
   }
 
   const s = spinner()
-  const newRPC = gnosisRpc.toString().trim()
+  const newRPC = chainRpc.toString().trim()
   if (oldRPC != newRPC) {
-    s.start(`Testing Gnosis RPC endpoints: "${newRPC}"`)
-    const errMsg = await validateRpcURLs(newRPC)
+    s.start(`Testing ${chainName(chainNetwork)} RPC endpoints: "${newRPC}"`)
+    const errMsg = await validateRpcURLs(newRPC,chainNetwork)
     if (errMsg) {
       s.stop(errMsg)
-      return await promptGnosisRPC()
+      return await promptRPC(chainNetwork)
     } else {
-      s.stop(green(`Gnosis RPC endpoints "${newRPC}" accepted!`))
+      s.stop(green(`${chainName(chainNetwork)} RPC endpoints "${newRPC}" accepted!`))
       return { oldRPC, newRPC }
     }
   }
   return { oldRPC, newRPC }
 }
 
-async function startNode({ beeId, datadir, passFile, verbosity, ports }, mode: BEE_MODE) {
+
+
+async function startNode({chainNetwork, beeId, datadir, passFile, verbosity, ports }, mode: BEE_MODE) {
   mkdirp(datadir)
+  const curr = CURRENCY[chainNetwork]
   const configFile = `${datadir}/pm2.config.js`
-  let beeCmd = `--api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir} --verbosity ${verbosity}`
+  let beeCmd = makeBeeCommandFragment(chainNetwork, ports,passFile,datadir,verbosity)
+  // `--api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir} --verbosity ${verbosity}`
   const s = spinner()
-  const { oldRPC, newRPC } = await promptGnosisRPC()
+  const { oldRPC, newRPC } = await promptRPC(chainNetwork)
 
-  await startEtherproxyIfNeeded(oldRPC, newRPC)
+  await startEtherproxyIfNeeded(chainNetwork,oldRPC, newRPC, s)
 
-  const XDAI_MIN = '0.01'
-  const minXdai = makeDai(XDAI_MIN)
-  const { fundingWallet, fundBalance } = await ensureFundingWalletHasMinimumFunds('0.011')
-  s.stop(`Funding Wallet ${fundingWallet} has ${toDai(fundBalance)} xDAI`)
+  const CURRENCY_MIN = '0.01'
+  const minCurrency = makeDai(CURRENCY_MIN)
+  // s.start(`Check Funding Wallet`)
+  const { fundingWallet, fundBalance } = await ensureFundingWalletHasMinimumFunds(chainNetwork,'0.011')
+  s.stop(`Funding Wallet ${fundingWallet} has ${toDai(fundBalance)} ${curr}`)
 
   let processName = `bee-${padBeeId(beeId)}-${ports[0]}`
-
+  const ETHERPROXY_URL = ETHERPROXY_URLS[chainNetwork]
   beeCmd += ` --blockchain-rpc-endpoint ${ETHERPROXY_URL} --swap-enable=true --full-node=${mode == BEE_MODE.FULLNODE}`
 
   fs.writeFileSync(
@@ -211,27 +254,27 @@ async function startNode({ beeId, datadir, passFile, verbosity, ports }, mode: B
         };`,
   )
 
-  s.start(`Initialising the Bee ${mode}`)
+  s.start(`Initialising the Bee ${mode} node`)
   await $`${BIN_DIR}/bee init --api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir}`
   const addr = getAddressFromBeeDataDirectory(datadir)
-  s.stop(`Bee ${mode} initialised. Node wallet address: ${green(`0x${addr}`)}`)
+  s.stop(`Bee ${mode} node initialised. Node wallet address: ${green(`0x${addr}`)}`)
   try {
     s.start(
-      `Funding bee ${mode} with xDAI. Sending ${toDai(minXdai)} xDAI from the Beest funding wallet ${fundingWallet} (${toDai(fundBalance)} xDAI) .`,
+      `Funding bee ${mode} node with ${curr}. Sending ${toDai(minCurrency)} ${curr} from the Beest funding wallet ${fundingWallet} (${toDai(fundBalance)} ${curr}) .`,
     )
-    const res = await sendNativeTransaction(getConfig(KEY.FUNDING_WALLET_PK, ''), `0x${addr}`, minXdai)
-    s.stop(`Bee ${mode} funded with ${green(toDai(minXdai))} xDAI. Transaction Hash: ${green(res.transaction.hash)}`)
+    const res = await sendNativeTransaction(chainNetwork,getConfig(KEY.FUNDING_WALLET_PK, ''), `0x${addr}`, minCurrency)
+    s.stop(`Bee ${mode} node funded with ${green(toDai(minCurrency))} ${curr}. Transaction Hash: ${green(res.transaction.hash)}`)
   } catch (err) {
     console.log({ err })
     await $`rm -rf ${datadir}`
     process.exit(0)
   }
 
-  s.start(`Starting Bee ${mode}`)
+  s.start(`Starting Bee ${mode} node`)
   let command = `pm2 start --time --name ${beeId}-${ports[0]} -s ${configFile}`
   const out1 = (await $`pm2 start --time --name ${beeId}-${ports[0]} -s ${configFile}`).stdout
   s.stop(
-    `Started Bee ${mode} at ${green(`http://localhost:${ports[0]}`)}. Type ${green(`"pm2 log ${processName}"`)} to check the bee logs.`,
+    `Started Bee ${mode} node at ${green(`http://localhost:${ports[0]}`)}. Type ${green(`"pm2 log ${processName}"`)} to check the bee logs.`,
   )
   let bee: BEE = {
     beeId,
@@ -240,30 +283,35 @@ async function startNode({ beeId, datadir, passFile, verbosity, ports }, mode: B
     configFile: configFile,
     command,
     mode,
+    network: chainNetwork
   }
   pushConfig(KEY.BEES, bee)
 }
 
-async function startEtherproxyIfNeeded(oldRPC, newRPC) {
-  const s = spinner()
+async function startEtherproxyIfNeeded(chainNetwork:BEE_NET,oldRPC, newRPC, s) {
+  // const s = spinner()
   if (newRPC != '') {
-    putConfig(KEY.GNOSIS_RPC, newRPC)
+    putConfig( RPCS[chainNetwork], newRPC)
   }
-  const etherproxyRunning = await isEtherproxyRunning()
-  const etherproxyReachable = await isEtherproxyReachable()
+  const etherproxyRunning = await isEtherproxyRunning(chainNetwork)
+  const etherproxyReachable = await isEtherproxyReachable(chainNetwork)
   const shouldStartEtherproxy = !(oldRPC == newRPC && etherproxyRunning && etherproxyReachable)
+  const ETHERPROXY_PORT = ETHERPROXY_PORTS[chainNetwork] 
+  const ETHERPROXY_URL = ETHERPROXY_URLS[chainNetwork]
   if (shouldStartEtherproxy) {
-    s.start('Starting etherproxy')
+    s.start(`Starting etherproxy (${chainName(chainNetwork)})`)
     const out = await startEtherproxy(ETHERPROXY_PORT, newRPC)
     await delay(5 * 1000) // FIXME temp fix for ECONNREFUSED error
-    s.stop(`Etherproxy started at ${green(ETHERPROXY_URL)} with target(s): ${green(newRPC)}`)
+    
+    s.stop(`Etherproxy (${chainName(chainNetwork)}) started at ${green(ETHERPROXY_URL)} with target(s): ${green(newRPC)}`)
   } else {
-    s.start('Checking for Etherproxy')
+    s.start('Checking for Etherproxy (${chainName(chainNetwork)})')
     s.stop(`Etherproxy running at ${green(ETHERPROXY_URL)} with target(s): ${green(newRPC)}`)
   }
 }
 
-async function ensureFundingWalletHasMinimumFunds(minimumXdai: string = '0.011') {
+async function ensureFundingWalletHasMinimumFunds(chainNetwork:BEE_NET, minimumCurrency: string = '0.011') {
+  const curr = CURRENCY[chainNetwork]
   const s = spinner()
   let fundingWallet = getConfig(KEY.FUNDING_WALLET, '')
   if (fundingWallet != '') {
@@ -272,18 +320,18 @@ async function ensureFundingWalletHasMinimumFunds(minimumXdai: string = '0.011')
     fundingWallet = createFundingWallet()
     s.stop(`Beest funding wallet created. Address: ${fundingWallet}`)
   }
-  let fundBalance = await getNativeBalance(fundingWallet)
+  let fundBalance = await getNativeBalance(chainNetwork,fundingWallet)
 
-  const minXdaiValue = makeDai(minimumXdai)
-  while (isLessThan(fundBalance, minXdaiValue)) {
+  const minCurrencyValue = makeDai(minimumCurrency)
+  while (isLessThan(fundBalance, minCurrencyValue)) {
     const confirmed = await confirm({
-      message: `Have you funded the Beest funding wallet at ${fundingWallet} with atleast ${minimumXdai} xDAI per bee node?`,
+      message: `Have you funded the Beest funding wallet at ${fundingWallet} with atleast ${minimumCurrency} ${curr} per ${chainNetwork} bee node?`,
     })
-    const errorMessage = `|  Beest funding wallet must have atleast ${minimumXdai} xDAI to start a light node or a full node.`
+    const errorMessage = `|  Beest funding wallet must have atleast ${minimumCurrency} ${curr} to start a ${chainNetwork} light node or a full node.`
     if (confirmed) {
-      fundBalance = await getNativeBalance(fundingWallet)
-      if (isLessThan(fundBalance, minXdaiValue)) {
-        console.log(red(`${errorMessage} Beest funding wallet balance: ${toDai(fundBalance)}  xDAI.`))
+      fundBalance = await getNativeBalance(chainNetwork,fundingWallet)
+      if (isLessThan(fundBalance, minCurrencyValue)) {
+        console.log(red(`${errorMessage} Beest funding wallet balance: ${toDai(fundBalance)}  ${curr}.`))
       } else {
         break
       }

@@ -5,15 +5,22 @@ import {
   KEY,
   getConfig,
   putConfig,
-  ETHERPROXY_URL,
-  ETHERPROXY_PORT,
-  GNOSIS_RPC_DEFAULT,
+  ETHERPROXY_URLS,
+  ETHERPROXY_PORTS,
+  RPC_DEFAULT,
+  BEE_NET,
+  CURRENCY,
+  CHAINS,
+  RPCS,
 } from './config'
 import Big from 'big.js'
 import { fs, fetch, $ } from 'zx'
-import { listFolders } from './utils'
+import { listFolders, saveAllProcesses } from './utils'
 import { Network } from 'ethers'
-const BZZ_CONTRACT = '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da'
+const BZZ_CONTRACTS = {
+  mainnet: '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da',
+  testnet: '0x543dDb01Ba47acB11de34891cD86B675F04840db'
+}
 const ABI = {
   uniswap: [
     {
@@ -109,9 +116,9 @@ export const createFundingWallet = () => {
   return w.address
 }
 
-export async function isEtherproxyReachable(etherproxyURL: string = '') {
+export async function isEtherproxyReachable(chainNetwork:BEE_NET,etherproxyURL: string = '') {
   if (etherproxyURL == '') {
-    etherproxyURL = ETHERPROXY_URL
+    etherproxyURL = ETHERPROXY_URLS[chainNetwork]
   }
   const requestBody = {
     jsonrpc: '2.0',
@@ -136,30 +143,29 @@ export async function isEtherproxyReachable(etherproxyURL: string = '') {
   return true
 }
 
-export const getRPC = async (useProxy = false) => {
-  let GNOSIS_RPC = getConfig(KEY.GNOSIS_RPC, GNOSIS_RPC_DEFAULT)
+export const getRPC = async (chainNetwork:BEE_NET,useProxy = false) => {
+  let GNOSIS_RPC = getConfig( RPCS[chainNetwork], RPC_DEFAULT[chainNetwork])
   if (!useProxy) {
     return GNOSIS_RPC
   }
-  const eproxy = await isEtherproxyRunning()
+  const eproxy = await isEtherproxyRunning(chainNetwork)
   if (eproxy) {
-    return ETHERPROXY_URL
+    return ETHERPROXY_URLS[chainNetwork]
   } else {
     return GNOSIS_RPC
   }
 }
 
-async function makeReadyProvider(useProxy = false) {
-  const network = new Network('gnosis', 100)
-  const rpc = await getRPC(useProxy)
-  // console.log({rpc})
+async function makeReadyProvider(chainNetwork:BEE_NET, useProxy = false) {
+  const network = new Network( CHAINS[chainNetwork].name , CHAINS[chainNetwork].chainId)
+  const rpc = await getRPC(chainNetwork,useProxy)
   const provider = new JsonRpcProvider(rpc, network, { staticNetwork: network })
   await provider.ready
   return provider
 }
 
-export async function isEtherproxyRunning() {
-  const pid = (await $`pm2 pid etherproxy-${ETHERPROXY_PORT}`).stdout.trim()
+export async function isEtherproxyRunning(chainNetwork:BEE_NET) {
+  const pid = (await $`pm2 pid etherproxy-${ETHERPROXY_PORTS[chainNetwork]}`).stdout.trim()
   return pid != '' && pid != '0'
 }
 
@@ -185,12 +191,13 @@ export async function startEtherproxy(port: number, targetRPC: string) {
   let name = `etherproxy-${port} ${conf}`
   putConfig(KEY.ETHERPROXY, { command, name })
   const out = (await $`pm2 start --name ${name} ${conf} --time`).stdout
-  // await $`pm2 save`
+  await saveAllProcesses()
   return out
 }
 
-async function makeReadySigner(privateKey: string) {
-  const provider = await makeReadyProvider()
+async function makeReadySigner(chainNetwork:BEE_NET,privateKey: string) {
+  // console.log({chainNetwork,privateKey})
+  const provider = await makeReadyProvider(chainNetwork)
   const signer = new Wallet(privateKey, provider)
   return { signer, provider }
 }
@@ -199,16 +206,16 @@ export function pad0x(address: string) {
   return address.startsWith('0x') ? address : `0x${address}`
 }
 
-export async function getNativeBalance(address: string) {
+export async function getNativeBalance(chainNetwork:BEE_NET,address: string) {
   let addr = pad0x(address)
-  const provider = await makeReadyProvider()
+  const provider = await makeReadyProvider(chainNetwork)
   const bigNumberBalance = await provider.getBalance(addr)
   return bigNumberBalance.toString()
 }
 
-export async function getBzzBalance(address: string) {
-  const provider = await makeReadyProvider()
-  const bzz = new Contract(BZZ_CONTRACT, ABI.bzz, provider)
+export async function getBzzBalance(chainNetwork:BEE_NET,address: string) {
+  const provider = await makeReadyProvider(chainNetwork)
+  const bzz = new Contract(BZZ_CONTRACTS[chainNetwork], ABI.bzz, provider)
   if (bzz && bzz.balanceOf) {
     const bigNumberBalance = await bzz.balanceOf(address)
     return bigNumberBalance.toString()
@@ -230,11 +237,11 @@ export function toBzz(bigNumberString: string) {
 
 // Reverse of makeDai: Convert a big number string to a decimal string for DAI (18 decimal places)
 export function toDai(bigNumberString: string, fixed: number = 4) {
-  return new Big(bigNumberString).div(new Big(10).pow(18)).toFixed(fixed).replace(/0+$/, '')
+  return new Big(bigNumberString).div(new Big(10).pow(18)).toFixed(fixed).replace(/0+$/, '0')
 }
 
-export async function sendNativeTransaction(privateKey: string, to: string, value: string) {
-  const { signer, provider } = await makeReadySigner(privateKey)
+export async function sendNativeTransaction(chainNetwork:BEE_NET, privateKey: string, to: string, value: string) {
+  const { signer, provider } = await makeReadySigner(chainNetwork,privateKey)
   // const feeData = await provider.getFeeData()
   try {
     const amount = await getMaxTransferableAmount(value, provider)
@@ -247,10 +254,10 @@ export async function sendNativeTransaction(privateKey: string, to: string, valu
   }
 }
 
-export async function sendBzzTransaction(privateKey: string, to: string, value: string) {
-  const { signer, provider } = await makeReadySigner(privateKey)
+export async function sendBzzTransaction(chainNetwork:BEE_NET,privateKey: string, to: string, value: string) {
+  const { signer, provider } = await makeReadySigner(chainNetwork,privateKey)
   // const gasPrice = await signer.getGasPrice()
-  const bzz = new Contract(BZZ_CONTRACT, ABI.bzz, signer)
+  const bzz = new Contract(BZZ_CONTRACTS[chainNetwork], ABI.bzz, signer)
   if (bzz.transfer) {
     const transaction = await bzz.transfer(to, value)
     const receipt = await transaction.wait(1)
@@ -266,10 +273,6 @@ export const isGreaterThan = (bigX: string, bigY: string) => {
   return new Big(bigX).gt(new Big(bigY))
 }
 
-// export async function drainFunds() {
-//     // console.log(await getNativeBalance('0xa93480312efD7ED40e3D2Afd2862B6a97B9Fe007'))
-
-// }
 
 export async function getMaxTransferableAmount(amount, provider: JsonRpcProvider) {
   const { gasPrice, maxFeePerGas, maxPriorityFeePerGas } = await provider.getFeeData()
@@ -310,11 +313,11 @@ export async function isValidRPC(rpcURL, chainId: number) {
       const data = (await response.json()) as { result: string }
 
       if (data.result == decimalToHex(chainId)) {
-        // console.log({rpcURL,data});
+        // console.log({rpcURL,data,chainId});
         return true
       } else {
-        process.exit(0)
-        console.log({ rpcURL, data })
+        // process.exit(0)
+        console.log({ rpcURL, data,chainId })
         return false
       }
     }
@@ -324,20 +327,25 @@ export async function isValidRPC(rpcURL, chainId: number) {
   return true
 }
 
-export async function drainTo(toAddress: string, txFee: string = '0.00006', fromV3WalletFilePath = '') {
+export function chainName(chainNetwork){
+  return chainNetwork == 'mainnet' ? 'Gnosis' : 'Sepolia'
+}
+
+export async function drainTo(chainNetwork:BEE_NET, toAddress: string, txFee: string = '0.00006', fromV3WalletFilePath = '') {
   const DAI_SAFE_SUB_VALUE = makeDai(txFee)
   const wallet = new Wallet(getConfig(KEY.FUNDING_WALLET_PK, ''))
   const addr = wallet.address
-  const balance = await getNativeBalance(addr)
+  const balance = await getNativeBalance(chainNetwork,addr)
+  const curr = CURRENCY[chainNetwork]
   if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
-    const provider = await makeReadyProvider()
+    const provider = await makeReadyProvider(chainNetwork)
     const feeData = await provider.getFeeData()
     const walletConnected = wallet.connect(provider)
     try {
       const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString()
       const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
       const receipt = await transaction.wait(1)
-      return `Funding Wallet ${addr} has ${toDai(balance)} xDAI. Drained ${toDai(value)} xDAI`
+      return `Funding Wallet ${addr} has ${toDai(balance)} ${curr}. Drained ${toDai(value)} ${curr}`
     } catch (err) {
       let msg = err.error.message
       // console.log(err)
@@ -351,34 +359,36 @@ export async function drainTo(toAddress: string, txFee: string = '0.00006', from
         const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
         const receipt = await transaction.wait(1)
         const prefix = fromV3WalletFilePath != '' ? `Wallet ${fromV3WalletFilePath}` : `Funding Wallet ${addr}`
-        return `${prefix} has ${toDai(balance.toString())} xDAI. Drained ${toDai(value)} xDAI!`
+        return `${prefix} has ${toDai(balance.toString())} ${curr}. Drained ${toDai(value)} ${curr}!`
       }
       return 'TODO: Retry Tx with lower value'
     }
   } else {
     if (balance == '0') {
-      return `Funding Wallet has no xDAI. Skipping.`
+      return `Funding Wallet has no ${curr}. Skipping.`
     }
-    return `Funding Wallet has ${toDai(balance)} xDAI. Funds too low. Skipping.`
+    return `Funding Wallet has ${toDai(balance)} ${curr}. Funds too low. Skipping.`
   }
 }
 
-export async function drainXdai(
+export async function drainCurrency(
+  chainNetwork:BEE_NET,
   v3WalletFilePath: string,
   password: string,
   toAddress: string,
   txFee: string = '0.00006',
 ) {
+  const curr = CURRENCY[chainNetwork]
   const DAI_SAFE_SUB_VALUE = makeDai(txFee)
   const jsonString = fs.readFileSync(v3WalletFilePath, 'utf8')
   const addr = JSON.parse(jsonString)['address']
-  const balance = await getNativeBalance(addr)
+  const balance = await getNativeBalance(chainNetwork,addr)
 
   if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
     // console.log(1)
-    // console.log(`Wallet ${v3WalletFilePath} has ${toDai(balance)} xDAI`)
+    // console.log(`Wallet ${v3WalletFilePath} has ${toDai(balance)} ${curr}`)
     const wallet = await Wallet.fromEncryptedJson(jsonString, password)
-    const provider = await makeReadyProvider()
+    const provider = await makeReadyProvider(chainNetwork)
     const feeData = await provider.getFeeData()
     // console.log(feeData)
     const walletConnected = wallet.connect(provider)
@@ -387,7 +397,7 @@ export async function drainXdai(
       const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString()
       const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
       const receipt = await transaction.wait(1)
-      return `Wallet ${v3WalletFilePath} has ${toDai(balance)} xDAI. Drained ${toDai(value)} xDAI`
+      return `Wallet ${v3WalletFilePath} has ${toDai(balance)} ${curr}. Drained ${toDai(value)} ${curr}`
       // return { transaction, receipt }
     } catch (err) {
       // console.log(3)
@@ -404,22 +414,23 @@ export async function drainXdai(
           // console.log(5)
           const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
           const receipt = await transaction.wait(1)
-          return `Wallet ${v3WalletFilePath} has ${toDai(balance.toString())} xDAI. Drained ${toDai(value)} xDAI`
+          return `Wallet ${v3WalletFilePath} has ${toDai(balance.toString())} ${curr}. Drained ${toDai(value)} ${curr}`
         } else {
-          return `Wallet ${v3WalletFilePath} has ${toDai(balance.toString())} xDAI. Funds too low. Skipping.`
+          return `Wallet ${v3WalletFilePath} has ${toDai(balance.toString())} ${curr}. Funds too low. Skipping.`
         }
       }
       return 'TODO: Retry Tx with lower value'
     }
   } else {
     if (balance == '0') {
-      return `Wallet ${v3WalletFilePath} has no xDAI. Skipping.`
+      return `Wallet ${v3WalletFilePath} has no ${chainNetwork} ${curr}. Skipping.`
     }
-    return `Wallet ${v3WalletFilePath} has ${toDai(balance)} xDAI. Funds too low. Skipping.`
+    return `Wallet ${v3WalletFilePath} has ${toDai(balance)} ${curr}. Funds too low. Skipping.`
   }
 }
 
-export async function drainXbzz(
+export async function drainToken(
+  chainNetwork:BEE_NET,
   v3WalletFilePath: string,
   password: string,
   toAddress: string,
@@ -428,14 +439,14 @@ export async function drainXbzz(
   const DAI_SAFE_SUB_VALUE = makeDai(txFee)
   const jsonString = fs.readFileSync(v3WalletFilePath, 'utf8')
   const addr = JSON.parse(jsonString)['address']
-  const balance = await getBzzBalance(addr)
+  const balance = await getBzzBalance(addr,chainNetwork)
   if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
     console.log(`${v3WalletFilePath} = ${toDai(balance)}`)
     // console.log({ to:toAddress, value:balance })
     const wallet = await Wallet.fromEncryptedJson(jsonString, password)
-    const provider = await makeReadyProvider()
+    const provider = await makeReadyProvider(chainNetwork)
     const signer = wallet.connect(provider)
-    const bzz = new Contract(BZZ_CONTRACT, ABI.bzz, signer)
+    const bzz = new Contract(BZZ_CONTRACTS[chainNetwork], ABI.bzz, signer)
     if (bzz.transfer) {
       const transaction = await bzz.transfer(toAddress, new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString())
       const receipt = await transaction.wait(1)

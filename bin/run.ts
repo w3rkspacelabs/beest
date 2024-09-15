@@ -1,7 +1,7 @@
 import arg from 'arg'
 import { intro, outro, select } from '@clack/prompts'
 import { commands } from '../src'
-import { BEEST, GOODBYE, initBeest, installBee } from '../src/config'
+import { BEEST, getAllConfig, GOODBYE, initBeest, installBee } from '../src/config'
 import { ask, ensureGlobalNpmCommandExists } from '../src/utils'
 import { Command } from '../src/command'
 
@@ -13,6 +13,7 @@ const ARGS_DB = {
 async function main() {
   process.env.FORCE_COLOR = '3' // preserves colored output with zx piped outputs
   const DB = await initBeest()
+  // console.log(await getAllConfig())
   const args = arg(ARGS_DB)
   let cmdlist: { label: string; value: any; hint: string }[] = []
   const commandList: Command[] = commands

@@ -1,7 +1,7 @@
 import { gray, green, red } from 'picocolors'
 import crypto from "crypto";
 import { $, fs, which, fetch, ProcessOutput } from 'zx';
-import { KEY, getConfig, putConfig } from './config';
+import { BEES_DIR, BEE_NET, KEY, RPCS, RPC_DEFAULT, getConfig, putConfig } from './config';
 import { spinner } from '@clack/prompts';
 import Table from 'cli-tableau'
 
@@ -93,9 +93,8 @@ export function listFolders(dirPath: string) {
 }
 
 
-export function getGnosisRPC() {
-    putConfig(KEY.GNOSIS_RPC, '')
-    return getConfig(KEY.GNOSIS_RPC, '')
+export function getRPC(chainNetwork:BEE_NET) {
+    return getConfig( RPCS[chainNetwork] , RPC_DEFAULT[chainNetwork])
 }
 
 export function console_log(str: string) {
@@ -134,8 +133,8 @@ export function printMessageBox(title: string, msg: string) {
 }
 
 export const printStartupSetup = async () => {
-    const out = (await $`pm2 save -s`).stdout
-    let title = 'STARTUP: To start Bees Automatically upon Reboot'
+    await saveAllProcesses()
+    let title = 'STARTUP: To start Bees Automatically upon Reboot. You only need to run this once.'
     const fixMessage = (msg: string) => {
         return msg.replace(' PATH=$PATH:', ' "PATH=$PATH":').replace(/\[PM2\] /g, '')
     }
@@ -169,6 +168,7 @@ export async function getBeeProcesses() {
     const sortedProcs = await getProcList()
     for (let i in sortedProcs) {
         let mode = ''
+        let network = ''
         let { name, pm_id, pm2_env } = sortedProcs[i]
 
         let status = pm2_env.status
@@ -178,15 +178,16 @@ export async function getBeeProcesses() {
             let bee = bees.find((val) => val.processName == name)
             if (bee) {
                 mode = bee.mode
+                network = bee.network
                 let apiURL = `Status: ${status}`;
                 if (status == 'online') {
                     apiURL = `http://localhost:${bee.port}`
                 }
-                result.push({ pm_id, name, mode, status, port: bee.port })
+                result.push({ pm_id, name, network, mode, status, port: bee.port })
             } else {
                 try {
                     await $`pm2 delete ${pm_id}`;
-                    await $`pm2 save -s`;
+                    await saveAllProcesses();
                 } catch (err) {
                     throw err;
                 }
@@ -196,23 +197,26 @@ export async function getBeeProcesses() {
     return result;
 }
 
+export async function saveAllProcesses(){
+    return $`pm2 save -s --force`;
+}
+
 export const printBeeProcesses = async () => {
     const bees = await getBeeProcesses()
-    // console.log({ bees })
     const table = new Table({
-        head: ['id', 'name', 'mode', 'process', 'bee API', 'show logs', 'start|stop'],
+        head: ['id', 'name', 'network', 'mode', 'process', 'API endpoint', 'logs', 'start|stop', 'datadir'],
         colAligns: ['left'],
         style: { 'padding-left': 1, head: ['cyan', 'bold'], compact: true },
     })
     for (let i in bees) {
         const bee = bees[i]
-        const { pm_id, name, mode, status, port } = bee
+        const { pm_id, name, network, mode, status, port, datadir } = bee
         let apiURL = `Status: ${status}`;
         if (status == 'online') {
             apiURL = `http://localhost:${port}`
         }
         let online = status == 'online'
-        table.push([pm_id, name, mode, online ? green(status) : red(status), apiURL, `pm2 logs ${pm_id}`, online ? `pm2 stop ${pm_id}` : `pm2 start ${pm_id}` ])
+        table.push([pm_id, name, network, mode, online ? green(status) : red(status), apiURL, `pm2 log ${pm_id}`, online ? `pm2 stop ${pm_id}` : `pm2 start ${pm_id}`, `${BEES_DIR}/${name.split('-').slice(0,-1).join('-')}` ])
     }
     if (table.length < 1) {
         console_log(red(`No bees found`))

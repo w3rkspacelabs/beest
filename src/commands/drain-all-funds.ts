@@ -1,8 +1,8 @@
 import { Command } from 'src/command'
-import { isCancel, cancel, text, spinner, confirm } from '@clack/prompts';
-import { createFundingWallet, drainTo, drainXdai, isEtherproxyRunning } from '../web3';
-import { BEES_DIR, BEEST_PASSWORD_FILE, getConfig, KEY } from '../config';
-import { ask, listFolders } from '../utils';
+import { spinner } from '@clack/prompts';
+import { createFundingWallet, drainCurrency } from '../web3';
+import { BEE_NET, BEES_DIR, BEEST_PASSWORD_FILE, getConfig, KEY } from '../config';
+import { listFolders } from '../utils';
 import { fs } from 'zx';
 
 export class DrainAllFunds implements Command {
@@ -25,9 +25,12 @@ export class DrainAllFunds implements Command {
       let dir = dirs[i]
       let keyFile = `${BEES_DIR}/${dir}/keys/swarm.key`
       if (fs.existsSync(keyFile)) {
-        s.start(`Draining ${keyFile}`)
-        const res = await drainXdai(keyFile, pwd, fundingWallet);
-        s.stop(res)
+        s.start(`Draining ${keyFile} mainnet funds`)
+        const res1 = await drainCurrency(BEE_NET.MAINNET, keyFile, pwd, fundingWallet);
+        s.stop(res1)
+        s.start(`Draining ${keyFile} testnet funds`)
+        const res2 = await drainCurrency(BEE_NET.TESTNET, keyFile, pwd, fundingWallet);
+        s.stop(res2)
       } else {
         let msg = `Wallet ${keyFile} not found. Skipping.`
         s.start(msg)

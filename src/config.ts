@@ -1,8 +1,8 @@
 import { open } from 'lmdb'
 import { $, fs, os } from 'zx'
-import { generatePassword, mkdirp } from './utils'
+import { generatePassword, listFolders, mkdirp } from './utils'
 import { isFreePort } from 'find-free-ports'
-import { spinner } from '@clack/prompts'
+import { confirm, spinner } from '@clack/prompts'
 import { cp, cpSync } from 'fs'
 import { makeDai } from './web3'
 
@@ -13,6 +13,7 @@ export type BEE = {
   configFile: string
   command: string
   mode: BEE_MODE
+  network: BEE_NET
 }
 
 let DB: any
@@ -32,15 +33,26 @@ export const BEEST_DIR = `${HOME_DIR}/.beest`
 export const BEES_DIR = `${BEEST_DIR}/bees`
 export const BIN_DIR = `${BEEST_DIR}/bin`
 export const BEE_CMD = `${BIN_DIR}/bee`
-export const GNOSIS_RPC_DEFAULT = 'https://rpc.gnosis.gateway.fm'
+export const RPC_DEFAULT = {
+  
+  mainnet: 'https://rpc.gnosis.gateway.fm',
+  testnet: 'https://ethereum-sepolia-rpc.publicnode.com'
+} 
+
 
 export enum KEY {
-  'NEXT_PORT',
-  'FUNDING_WALLET',
-  'GNOSIS_RPC',
-  'FUNDING_WALLET_PK',
-  'BEES',
-  'ETHERPROXY',
+  'NEXT_PORT' = 'NEXT_PORT',
+  'FUNDING_WALLET' = 'FUNDING_WALLET',
+  'RPC_GNOSIS' = 'RPC_GNOSIS',
+  'RPC_SEPOLIA' = 'RPC_SEPOLIA',
+  'FUNDING_WALLET_PK' = 'FUNDING_WALLET_PK',
+  'BEES' = 'BEES',
+  'ETHERPROXY' = 'ETHERPROXY',
+}
+
+export const RPCS = {
+  mainnet: KEY.RPC_GNOSIS,
+  testnet: KEY.RPC_SEPOLIA
 }
 
 export enum BEE_MODE {
@@ -49,8 +61,43 @@ export enum BEE_MODE {
   FULLNODE = 'full',
 }
 
-export const ETHERPROXY_PORT = 9999
-export const ETHERPROXY_URL = `http://localhost:${ETHERPROXY_PORT}`
+export enum BEE_NET {
+  MAINNET = 'mainnet',
+  TESTNET = 'testnet'
+}
+
+
+export const ETHERPROXY_PORTS = {
+  mainnet: 9999,
+  testnet: 8888
+}
+
+export const CHAINS = {
+  mainnet: {
+    name: 'gnosis',
+    chainId: 100
+  },
+  testnet: {
+    name: 'sepolia',
+    chainId: 11155111
+  }
+}
+
+export const CURRENCY = {
+  mainnet: 'xDAI',
+  testnet: 'sETH'
+}
+
+export const TOKEN = {
+  mainnet: 'xBZZ',
+  testnet: 'sBZZ'
+}
+
+// export const ETHERPROXY_TESTNET_PORT = 9999
+export const ETHERPROXY_URLS = {
+  'mainnet': `http://localhost:${ETHERPROXY_PORTS.mainnet}`,
+  'testnet': `http://localhost:${ETHERPROXY_PORTS.testnet}`
+}
 export const BEEST_PASSWORD_FILE = `${BEEST_DIR}/beest.pwd`
 
 export async function initBeest() {
@@ -70,11 +117,35 @@ export async function initBeest() {
   if (!fs.existsSync(pwdFile)) {
     fs.writeFileSync(pwdFile, generatePassword())
   }
+  const emptyBeeFolders = listFolders(BEES_DIR).filter(val => fs.readdirSync(`${BEES_DIR}/${val}`).length == 0)
+  // cleanup
+  for(let i in emptyBeeFolders){
+    fs.rmdirSync(`${BEES_DIR}/${emptyBeeFolders[i]}`)
+    // console.log(emptyBeeFolders[i])
+  }
   return beestDb()
 }
 
 export async function installBee() {
-  if (!fs.existsSync(`${BIN_DIR}/bee`)) {
+  const beeNotInstalled = !fs.existsSync(`${BIN_DIR}/bee`);
+  const installedBeeVersion = (await $`${BIN_DIR}/bee version`).stdout.split('-')[0].trim()
+  const tag:any = (await (await fetch('https://api.github.com/repos/ethersphere/bee/releases/latest')).json() as any).name.slice(1);
+  let upgrade; 
+  const newVersionAvailable = installedBeeVersion != tag
+  // console.log({installedBeeVersion,tag,newVersionAvailable})
+  if(newVersionAvailable){
+    upgrade = await confirm({
+      message: `Installed bee: v${installedBeeVersion}. Available bee: v${tag}. Upgrade to new bee version?`,
+    })
+    // console.log({upgrade})
+    // process.exit(0)
+  }
+  // process.exit(0);
+  // const newBeeVersionAvailable 
+  if (beeNotInstalled || upgrade) {
+    if(upgrade){
+      await $`rm ${BIN_DIR}/bee`
+    }
     const s = spinner()
     s.start(`Installing latest bee version into ${BEE_CMD}`)
     let out = (await $`wget -q -O - https://raw.githubusercontent.com/ethersphere/bee/master/install.sh`).stdout
@@ -92,12 +163,24 @@ export async function installBee() {
 
 export const beestDb = () => {
   if (!DB) {
-    DB = open({
+    return open({
       path: `${HOME_DIR}/.beest/beest.lmdb`,
       compression: true,
     })
   }
   return DB
+}
+
+export const getAllConfig = () => {
+  const range = beestDb().getKeys()
+  const iterator = range.iterate();
+  let results = {}
+  let result = iterator.next();
+  while (!result.done) {
+    results[result.value] = getConfig(result.value,'')
+    result = iterator.next(); 
+  }
+  return results;
 }
 
 export const getConfig = <T>(key: KEY, val: T): T => {
@@ -106,9 +189,6 @@ export const getConfig = <T>(key: KEY, val: T): T => {
 }
 
 export const putConfig = (key: KEY, val: any) => {
-  if (key == KEY.GNOSIS_RPC && val.trim() == '') {
-    return
-  }
   beestDb().putSync(key, val)
 }
 
