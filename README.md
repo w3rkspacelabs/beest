@@ -119,8 +119,3 @@ pm2 delete beest
 - [ ] interactive target neighborhood selection
 - [ ] testnet support
 - [ ] non-interactive CI/CD mode
- 
-### Delete all bees (but keep Beest installation)
-```
-rm -rf ~/.beest/bees/*
-```
