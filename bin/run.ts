@@ -1,8 +1,8 @@
 import arg from 'arg'
-import { intro, outro, select } from '@clack/prompts'
+import { intro, outro, select, spinner } from '@clack/prompts'
 import { commands } from '../src'
 import { BEEST, getAllConfig, GOODBYE, initBeest, installBee } from '../src/config'
-import { ask, ensureGlobalNpmCommandExists } from '../src/utils'
+import { ask, ensureGlobalNpmCommandExists, printBeestProcesses } from '../src/utils'
 import { Command } from '../src/command'
 
 const ARGS_DB = {
@@ -25,7 +25,10 @@ async function main() {
     await installBee()
     await ensureGlobalNpmCommandExists('etherproxy')
     await ensureGlobalNpmCommandExists('pm2')
-
+    const s = spinner()
+    s.start('Fetching beest processes')
+    s.stop('Process List:')
+    await printBeestProcesses();
     const cmd = (await select({
       message: ask('Select an action', '--action', '-a'),
       options: cmdlist,

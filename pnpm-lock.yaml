@@ -11,12 +11,15 @@ importers:
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0
+      '@types/big.js':
+        specifier: ^6.2.2
+        version: 6.2.2
       arg:
         specifier: ^5.0.2
         version: 5.0.2
       big.js:
-        specifier: ^6.2.1
-        version: 6.2.1
+        specifier: ^6.2.2
+        version: 6.2.2
       cli-tableau:
         specifier: ^2.0.1
         version: 2.0.1
@@ -48,9 +51,6 @@ importers:
       '@tsconfig/node20':
         specifier: ^20.1.4
         version: 20.1.4
-      '@types/big.js':
-        specifier: ^6.2.2
-        version: 6.2.2
       '@types/jest':
         specifier: ^29.5.12
         version: 29.5.12
@@ -1275,8 +1275,8 @@ packages:
   before-after-hook@3.0.2:
     resolution: {integrity: sha512-Nik3Sc0ncrMK4UUdXQmAnRtzmNQTAAXmXIopizwZ1W1t8QmfJj+zL4OA2I7XPTPW5z5TDqv4hRo/JzouDJnX3A==}
 
-  big.js@6.2.1:
-    resolution: {integrity: sha512-bCtHMwL9LeDIozFn+oNhhFoq+yQ3BNdnsLSASUxLciOb1vgvpHsIO1dsENiGMgbb4SkP5TrzWzRiLddn8ahVOQ==}
+  big.js@6.2.2:
+    resolution: {integrity: sha512-y/ie+Faknx7sZA5MfGA2xKlu0GDv8RWrXGsmlteyJQ2lvoKv9GBK/fpRMc2qlSoBAgNxrixICFCBefIq8WCQpQ==}
 
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
@@ -5315,7 +5315,7 @@ snapshots:
 
   before-after-hook@3.0.2: {}
 
-  big.js@6.2.1: {}
+  big.js@6.2.2: {}
 
   binary-extensions@2.3.0: {}
 

@@ -1,6 +1,6 @@
 import { Command } from '../command'
 import { select, text, confirm, isCancel, cancel } from '@clack/prompts'
-import { ask, console_log, delay, getRPC, mkdirp, printBeeProcesses, printStartupSetup } from '../utils'
+import { ask, console_log, delay, getRPC, mkdirp, printBeestProcesses, printStartupSetup } from '../utils'
 import {
   freeBeePorts,
   newBeeId,
@@ -86,7 +86,7 @@ export class RunBeeNode implements Command {
       const s = spinner()
       s.start('Fetching Beest processes')
       s.stop('Beest Process List:')
-      await printBeeProcesses()
+      await printBeestProcesses()
       s.start('Printing Beest processes')
       s.stop('Beest Service Setup: ')
       await printStartupSetup()
@@ -103,8 +103,8 @@ function makeBeeCommandFragment(chainNetwork, ports,passFile,datadir,verbosity){
   }
   return [
     network,
-    `--api-addr 127.0.0.1:${ports[0]}`,
-    `--p2p-addr 127.0.0.1:${ports[1]}`,
+    `--api-addr :${ports[0]}`,
+    `--p2p-addr :${ports[1]}`,
     `--password-file ${passFile}`,
     `--data-dir ${datadir}`,
     `--verbosity ${verbosity}`
@@ -116,7 +116,6 @@ async function startUltraLightNode({ chainNetwork, beeId, datadir, passFile, ver
   mkdirp(datadir)
   const configFile = `${datadir}/pm2.config.js`
   let beeCmd = makeBeeCommandFragment(chainNetwork, ports,passFile,datadir,verbosity)
-  // `--api-addr :${ports[0]} --p2p-addr :${ports[1]} --password-file ${passFile} --data-dir ${datadir} --verbosity ${verbosity}`
   beeCmd += ` --swap-enable=false --full-node=false`
   let processName = `bee-${padBeeId(beeId)}-${ports[0]}`
   fs.writeFileSync(
@@ -300,7 +299,7 @@ async function startEtherproxyIfNeeded(chainNetwork:BEE_NET,oldRPC, newRPC, s) {
   const ETHERPROXY_URL = ETHERPROXY_URLS[chainNetwork]
   if (shouldStartEtherproxy) {
     s.start(`Starting etherproxy (${chainName(chainNetwork)})`)
-    const out = await startEtherproxy(ETHERPROXY_PORT, newRPC)
+    const out = await startEtherproxy(chainNetwork, newRPC)
     await delay(5 * 1000) // FIXME temp fix for ECONNREFUSED error
     
     s.stop(`Etherproxy (${chainName(chainNetwork)}) started at ${green(ETHERPROXY_URL)} with target(s): ${green(newRPC)}`)

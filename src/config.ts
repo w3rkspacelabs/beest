@@ -1,5 +1,5 @@
 import { open } from 'lmdb'
-import { $, fs, os } from 'zx'
+import { $, fs, os, fetch } from 'zx'
 import { generatePassword, listFolders, mkdirp } from './utils'
 import { isFreePort } from 'find-free-ports'
 import { confirm, spinner } from '@clack/prompts'
@@ -36,7 +36,7 @@ export const BEE_CMD = `${BIN_DIR}/bee`
 export const RPC_DEFAULT = {
   
   mainnet: 'https://rpc.gnosis.gateway.fm',
-  testnet: 'https://ethereum-sepolia-rpc.publicnode.com'
+  testnet: 'https://rpc2.sepolia.org'
 } 
 
 
@@ -47,7 +47,18 @@ export enum KEY {
   'RPC_SEPOLIA' = 'RPC_SEPOLIA',
   'FUNDING_WALLET_PK' = 'FUNDING_WALLET_PK',
   'BEES' = 'BEES',
-  'ETHERPROXY' = 'ETHERPROXY',
+  'ETHERPROXY_GNOSIS' = 'ETHERPROXY_GNOSIS',
+  'ETHERPROXY_SEPOLIA' = 'ETHERPROXY_SEPOLIA',
+}
+
+export const ETHERPROXIES = {
+  mainnet: KEY.ETHERPROXY_GNOSIS,
+  testnet: KEY.ETHERPROXY_SEPOLIA
+}
+
+export const TX_FEE = {
+  mainnet: '0.0001',
+  testnet: '0.0004'
 }
 
 export const RPCS = {
@@ -126,26 +137,33 @@ export async function initBeest() {
   return beestDb()
 }
 
-export async function installBee() {
-  const beeNotInstalled = !fs.existsSync(`${BIN_DIR}/bee`);
+export async function upgradeBee() {
+  const s = spinner()
   const installedBeeVersion = (await $`${BIN_DIR}/bee version`).stdout.split('-')[0].trim()
-  const tag:any = (await (await fetch('https://api.github.com/repos/ethersphere/bee/releases/latest')).json() as any).name.slice(1);
+  s.start(`Fetching installed bee version`)
+  s.stop(`Installed bee version: v${installedBeeVersion}`)
+  s.start(`Fetching latest bee version`)
+  const tag = (await $`curl -s https://api.github.com/repos/ethersphere/bee/releases/latest`).json().name.slice(1)
+  s.stop(`Latest bee version: v${tag}`)
   let upgrade; 
-  const newVersionAvailable = installedBeeVersion != tag
-  // console.log({installedBeeVersion,tag,newVersionAvailable})
+  const newVersionAvailable = installedBeeVersion != tag;
   if(newVersionAvailable){
     upgrade = await confirm({
       message: `Installed bee: v${installedBeeVersion}. Available bee: v${tag}. Upgrade to new bee version?`,
     })
-    // console.log({upgrade})
-    // process.exit(0)
-  }
-  // process.exit(0);
-  // const newBeeVersionAvailable 
-  if (beeNotInstalled || upgrade) {
     if(upgrade){
       await $`rm ${BIN_DIR}/bee`
+      await installBee();
     }
+  }else{
+    s.start('')
+    s.stop(`Already at latest version`)
+  }
+}
+
+export async function installBee() {
+  const beeNotInstalled = !fs.existsSync(`${BIN_DIR}/bee`);
+  if (beeNotInstalled) {
     const s = spinner()
     s.start(`Installing latest bee version into ${BEE_CMD}`)
     let out = (await $`wget -q -O - https://raw.githubusercontent.com/ethersphere/bee/master/install.sh`).stdout
@@ -226,8 +244,6 @@ export const freeBeePorts = async () => {
   while (true) {
     // console.log({i})
     const free = await isFreePort(i)
-    // const free = await portUsed.check(i,'127.0.0.1')
-    // console.log({i,free})
     if (free) {
       ports.push(i)
       if (ports.length == 2) {

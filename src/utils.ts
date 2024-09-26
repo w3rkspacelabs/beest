@@ -1,7 +1,7 @@
 import { gray, green, red } from 'picocolors'
 import crypto from "crypto";
 import { $, fs, which, fetch, ProcessOutput } from 'zx';
-import { BEES_DIR, BEE_NET, KEY, RPCS, RPC_DEFAULT, getConfig, putConfig } from './config';
+import { BEES_DIR, BEEST_DIR, BEE_NET, KEY, RPCS, RPC_DEFAULT, getConfig, putConfig } from './config';
 import { spinner } from '@clack/prompts';
 import Table from 'cli-tableau'
 
@@ -158,7 +158,8 @@ export async function getProcList() {
 }
 
 export async function getBeeProcesses() {
-    let result = []
+    let beeList = []
+    let etherproxyList = []
     let bees = getConfig(KEY.BEES, [])
     const _bees = bees.filter(bee => fs.existsSync(bee.configFile))
     if (bees.length > _bees.length) {
@@ -172,8 +173,17 @@ export async function getBeeProcesses() {
         let { name, pm_id, pm2_env } = sortedProcs[i]
 
         let status = pm2_env.status
-        if (name.split('-')[0] == 'etherproxy') {
-            //TODO
+        let nameParts = name.split('-') 
+        if (nameParts[0] == 'etherproxy') {
+            let network = nameParts[1] == '9999' ? 'mainnet' : 'testnet';
+            etherproxyList.push({
+                name,
+                port:nameParts[1],
+                network,
+                target: RPC_DEFAULT[network],
+                pm_id, 
+                status
+            })
         } else {
             let bee = bees.find((val) => val.processName == name)
             if (bee) {
@@ -183,7 +193,7 @@ export async function getBeeProcesses() {
                 if (status == 'online') {
                     apiURL = `http://localhost:${bee.port}`
                 }
-                result.push({ pm_id, name, network, mode, status, port: bee.port })
+                beeList.push({ pm_id, name, network, mode, status, port: bee.port })
             } else {
                 try {
                     await $`pm2 delete ${pm_id}`;
@@ -194,33 +204,53 @@ export async function getBeeProcesses() {
             }
         }
     }
-    return result;
+    return {beeList,etherproxyList};
 }
 
 export async function saveAllProcesses(){
     return $`pm2 save -s --force`;
 }
 
-export const printBeeProcesses = async () => {
-    const bees = await getBeeProcesses()
+export const printBeestProcesses = async (includeEtherproxy=false) => {
+    const {beeList,etherproxyList} = await getBeeProcesses()
     const table = new Table({
-        head: ['id', 'name', 'network', 'mode', 'process', 'API endpoint', 'logs', 'start|stop', 'datadir'],
+        head: ['id', 'name', 'network', 'mode', 'status', 'API endpoint', 'logs', 'start|stop', 'pm2 config'],
         colAligns: ['left'],
         style: { 'padding-left': 1, head: ['cyan', 'bold'], compact: true },
     })
-    for (let i in bees) {
-        const bee = bees[i]
+    const proxyTable = new Table({
+        head: ['id', 'name', 'network', 'status', 'API endpoint', 'target','logs','pm2 config'],
+        colAligns: ['left'],
+        style: { 'padding-left': 1, head: ['cyan', 'bold'], compact: true },
+    })
+    for (let i in beeList) {
+        const bee = beeList[i]
         const { pm_id, name, network, mode, status, port, datadir } = bee
         let apiURL = `Status: ${status}`;
         if (status == 'online') {
             apiURL = `http://localhost:${port}`
         }
         let online = status == 'online'
-        table.push([pm_id, name, network, mode, online ? green(status) : red(status), apiURL, `pm2 log ${pm_id}`, online ? `pm2 stop ${pm_id}` : `pm2 start ${pm_id}`, `${BEES_DIR}/${name.split('-').slice(0,-1).join('-')}` ])
+        table.push([pm_id, name, network, mode, online ? green('running') : red(status), apiURL, `pm2 log ${pm_id}`, online ? `pm2 stop ${pm_id}` : `pm2 start ${pm_id}`, `${BEES_DIR}/${name.split('-').slice(0,-1).join('')}/pm2.config.js` ])
     }
     if (table.length < 1) {
         console_log(red(`No bees found`))
     } else {
         console_log(table.toString())
+    }
+    for(let i in etherproxyList){
+        const proxy = etherproxyList[i]
+        const {name,port,network,target,pm_id,status} = proxy
+        let online = status == 'online'
+        let apiURL = `Status: ${status}`;
+        if (status == 'online') {
+            apiURL = `http://localhost:${port}`
+        }
+        proxyTable.push([pm_id,name,network,online ? green('running') : red(status), apiURL, target, `pm2 log ${pm_id}`, `${BEEST_DIR}/${network}-${name}-pm2.config.js` ])
+    }
+    if (proxyTable.length < 1) {
+        console_log(red(`No etherproxies found`))
+    } else {
+        console_log(proxyTable.toString())
     }
 }

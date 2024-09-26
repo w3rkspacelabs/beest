@@ -12,11 +12,16 @@ import {
   CURRENCY,
   CHAINS,
   RPCS,
+  ETHERPROXIES,
+  TX_FEE,
 } from './config'
 import Big from 'big.js'
-import { fs, fetch, $ } from 'zx'
+import { fs, fetch, $, os } from 'zx'
 import { listFolders, saveAllProcesses } from './utils'
 import { Network } from 'ethers'
+import { read } from 'fs'
+import { red } from 'picocolors'
+import { spinner } from '@clack/prompts'
 const BZZ_CONTRACTS = {
   mainnet: '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da',
   testnet: '0x543dDb01Ba47acB11de34891cD86B675F04840db'
@@ -103,6 +108,23 @@ const ABI = {
   ],
 }
 
+async function getPrivateKeyFromKeystore(keystorePath, password) {
+  // Read the keystore file
+  const keystoreJson = fs.readFileSync(keystorePath, 'utf8');
+
+  try {
+    // Decrypt the keystore file to get the wallet
+    const wallet = await Wallet.fromEncryptedJson(keystoreJson, password);
+
+    // Extract the private key from the wallet
+    const privateKey = wallet.privateKey;
+    return privateKey;
+  } catch (error) {
+    console.error("Error decrypting keystore:", error);
+    throw error;
+  }
+}
+
 export const createFundingWallet = () => {
   let walletAddress = getConfig(KEY.FUNDING_WALLET, '')
   if (walletAddress != '') {
@@ -169,8 +191,10 @@ export async function isEtherproxyRunning(chainNetwork:BEE_NET) {
   return pid != '' && pid != '0'
 }
 
-export async function startEtherproxy(port: number, targetRPC: string) {
-  const conf = `${BEEST_DIR}/etherproxy-pm2.config.js`
+export async function startEtherproxy(chainNetwork:BEE_NET, targetRPC: string) {
+  const port = ETHERPROXY_PORTS[chainNetwork] 
+  
+  const conf = `${BEEST_DIR}/${chainNetwork}-etherproxy-${port}-pm2.config.js`
   fs.writeFileSync(
     conf,
     `module.exports = {
@@ -189,7 +213,7 @@ export async function startEtherproxy(port: number, targetRPC: string) {
 
   let command = `pm2 start --name etherproxy-${port} ${conf} --time`
   let name = `etherproxy-${port} ${conf}`
-  putConfig(KEY.ETHERPROXY, { command, name })
+  putConfig(ETHERPROXIES[chainNetwork], { command, name })
   const out = (await $`pm2 start --name ${name} ${conf} --time`).stdout
   await saveAllProcesses()
   return out
@@ -331,18 +355,18 @@ export function chainName(chainNetwork){
   return chainNetwork == 'mainnet' ? 'Gnosis' : 'Sepolia'
 }
 
-export async function drainTo(chainNetwork:BEE_NET, toAddress: string, txFee: string = '0.00006', fromV3WalletFilePath = '') {
-  const DAI_SAFE_SUB_VALUE = makeDai(txFee)
+export async function drainTo(chainNetwork:BEE_NET, toAddress: string, fromV3WalletFilePath = '') {
+  const FEE_SAFE_SUB_VALUE = makeDai(TX_FEE[chainNetwork])
   const wallet = new Wallet(getConfig(KEY.FUNDING_WALLET_PK, ''))
   const addr = wallet.address
   const balance = await getNativeBalance(chainNetwork,addr)
   const curr = CURRENCY[chainNetwork]
-  if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
+  if (isGreaterThan(balance, FEE_SAFE_SUB_VALUE)) {
     const provider = await makeReadyProvider(chainNetwork)
     const feeData = await provider.getFeeData()
     const walletConnected = wallet.connect(provider)
     try {
-      const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString()
+      const value = new Big(balance).sub(FEE_SAFE_SUB_VALUE).toString()
       const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
       const receipt = await transaction.wait(1)
       return `Funding Wallet ${addr} has ${toDai(balance)} ${curr}. Drained ${toDai(value)} ${curr}`
@@ -355,7 +379,7 @@ export async function drainTo(chainNetwork:BEE_NET, toAddress: string, txFee: st
         const cost = Big(values[10])
         const short = cost.sub(balance)
         // console.log({ balance:balance.toString(), cost:cost.toString(), short:short.toString() })
-        const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).sub(short).toString()
+        const value = new Big(balance).sub(FEE_SAFE_SUB_VALUE).sub(short).toString()
         const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
         const receipt = await transaction.wait(1)
         const prefix = fromV3WalletFilePath != '' ? `Wallet ${fromV3WalletFilePath}` : `Funding Wallet ${addr}`
@@ -375,32 +399,39 @@ export async function drainCurrency(
   chainNetwork:BEE_NET,
   v3WalletFilePath: string,
   password: string,
-  toAddress: string,
-  txFee: string = '0.00006',
+  toAddress: string
 ) {
   const curr = CURRENCY[chainNetwork]
-  const DAI_SAFE_SUB_VALUE = makeDai(txFee)
+  const FEE_SAFE_SUB_VALUE = makeDai( TX_FEE[chainNetwork] )
   const jsonString = fs.readFileSync(v3WalletFilePath, 'utf8')
   const addr = JSON.parse(jsonString)['address']
   const balance = await getNativeBalance(chainNetwork,addr)
+  const beeId = v3WalletFilePath.split('/').slice(-3)[0]
+  const pass = fs.readFileSync(`${BEEST_DIR}/beest.pwd`).toString().trim()
+  const pk = await getPrivateKeyFromKeystore(v3WalletFilePath,pass)
 
-  if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
+  if (isGreaterThan(balance, FEE_SAFE_SUB_VALUE)) {
     // console.log(1)
     // console.log(`Wallet ${v3WalletFilePath} has ${toDai(balance)} ${curr}`)
     const wallet = await Wallet.fromEncryptedJson(jsonString, password)
     const provider = await makeReadyProvider(chainNetwork)
     const feeData = await provider.getFeeData()
-    // console.log(feeData)
+    // console.log({chainNetwork,provider:provider._network.name,feeData})
     const walletConnected = wallet.connect(provider)
+    const value = new Big(balance).sub(FEE_SAFE_SUB_VALUE).toString()
+    const cost = (new Big(feeData.gasPrice.toString()).mul('21000')+value )
     try {
       // console.log(2)
-      const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString()
+      
       const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
       const receipt = await transaction.wait(1)
-      return `Wallet ${v3WalletFilePath} has ${toDai(balance)} ${curr}. Drained ${toDai(value)} ${curr}`
+      return `${beeId} Wallet ${toAddress} has ${toDai(balance)} ${curr}. Drained ${toDai(value)} ${curr}`
       // return { transaction, receipt }
     } catch (err) {
-      // console.log(3)
+      console.log({balance:toDai(balance),curr,value:toDai(value),DAI_SAFE_SUB_VALUE:toDai(FEE_SAFE_SUB_VALUE),cost:toDai(cost) })
+      if(err.shortMessage){
+        return `${beeId} Wallet ${toAddress} (PK: ${pk}) has ${toDai(balance)} ${curr}. ${red(`${err.code}`)}`
+      }
       let msg = err.error.message
       if (msg.startsWith('InsufficientFunds, Balance is')) {
         // console.log(4)
@@ -409,8 +440,8 @@ export async function drainCurrency(
         const cost = Big(values[10])
         const short = cost.sub(balance)
         // console.log({ balance:balance.toString(), cost:cost.toString(), short:short.toString() })
-        const value = new Big(balance).sub(DAI_SAFE_SUB_VALUE).sub(short).toString()
-        if (isGreaterThan(balance.toString(), Big(DAI_SAFE_SUB_VALUE).plus(value).toString())) {
+        const value = new Big(balance).sub(FEE_SAFE_SUB_VALUE).sub(short).toString()
+        if (isGreaterThan(balance.toString(), Big(FEE_SAFE_SUB_VALUE).plus(value).toString())) {
           // console.log(5)
           const transaction = await walletConnected.sendTransaction({ gasLimit: 21000, to: toAddress, value })
           const receipt = await transaction.wait(1)
@@ -433,14 +464,13 @@ export async function drainToken(
   chainNetwork:BEE_NET,
   v3WalletFilePath: string,
   password: string,
-  toAddress: string,
-  txFee: string = '0.0001',
+  toAddress: string
 ) {
-  const DAI_SAFE_SUB_VALUE = makeDai(txFee)
+  const FEE_SAFE_SUB_VALUE = makeDai(TX_FEE[chainNetwork])
   const jsonString = fs.readFileSync(v3WalletFilePath, 'utf8')
   const addr = JSON.parse(jsonString)['address']
   const balance = await getBzzBalance(addr,chainNetwork)
-  if (isGreaterThan(balance, DAI_SAFE_SUB_VALUE)) {
+  if (isGreaterThan(balance, FEE_SAFE_SUB_VALUE)) {
     console.log(`${v3WalletFilePath} = ${toDai(balance)}`)
     // console.log({ to:toAddress, value:balance })
     const wallet = await Wallet.fromEncryptedJson(jsonString, password)
@@ -448,7 +478,7 @@ export async function drainToken(
     const signer = wallet.connect(provider)
     const bzz = new Contract(BZZ_CONTRACTS[chainNetwork], ABI.bzz, signer)
     if (bzz.transfer) {
-      const transaction = await bzz.transfer(toAddress, new Big(balance).sub(DAI_SAFE_SUB_VALUE).toString())
+      const transaction = await bzz.transfer(toAddress, new Big(balance).sub(FEE_SAFE_SUB_VALUE).toString())
       const receipt = await transaction.wait(1)
       return { transaction, receipt }
     }
