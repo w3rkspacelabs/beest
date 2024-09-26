@@ -117,5 +117,5 @@ pm2 delete beest
 - [ ] stake bee node from funding wallet
 - [ ] manually upgrade bee nodes 
 - [ ] interactive target neighborhood selection
-- [ ] testnet support
+- [x] testnet support
 - [ ] non-interactive CI/CD mode
