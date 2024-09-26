@@ -8,7 +8,7 @@
 ╚═════╝ ╚══════╝╚══════╝╚══════╝   ╚═╝    
 ```
 
-**Bees**t **T**oolkit for [Swarm](https://www.ethswarm.org/)
+**Bees** **T**oolkit for [Swarm](https://www.ethswarm.org/)
 
 ![image](https://github.com/user-attachments/assets/adef6596-79be-4495-bc72-9b2ae3b4e892)
 ## Requirements
