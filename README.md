@@ -119,3 +119,4 @@ pm2 delete beest
 - [ ] interactive target neighborhood selection
 - [x] testnet support
 - [ ] non-interactive CI/CD mode
+- [ ] serve a decentralized website with gateway-proxy
